@@ -17,7 +17,7 @@
 module Cardano.Ledger.Alonzo.Rules.Utxo where
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..), serialize)
-import Cardano.Crypto.DSIGN.Class (DSIGNAlgorithm, sizeSigDSIGN)
+import Cardano.Crypto.DSIGN.Class (sizeSigDSIGN)
 import Cardano.Ledger.Alonzo.Data (dataHashSize, getPlutusData)
 import Cardano.Ledger.Alonzo.PlutusScriptApi (scriptsNeeded)
 import Cardano.Ledger.Alonzo.Rules.Utxos (UTXOS, UtxosPredicateFailure)
@@ -49,6 +49,7 @@ import Cardano.Ledger.BaseTypes
   )
 import Cardano.Ledger.Coin
 import qualified Cardano.Ledger.Core as Core
+import qualified Cardano.Ledger.Crypto as CLC (Crypto (DSIGN))
 import Cardano.Ledger.Era (Crypto, Era, TxInBlock, ValidateScript (..))
 import qualified Cardano.Ledger.Era as Era
 import qualified Cardano.Ledger.Mary.Value as Mary (Value)
@@ -758,7 +759,7 @@ evaluateTransactionBalance pp u stakepools txb = consumed pp u txb Val.<-> Shell
 
 evaluateTransactionFee ::
   forall era tx.
-  ( DSIGNAlgorithm (Crypto era),
+  ( Era era,
     HasField "_minfeeA" (Core.PParams era) Natural,
     HasField "_minfeeB" (Core.PParams era) Natural,
     HasField "_prices" (Core.PParams era) Prices,
@@ -772,7 +773,7 @@ evaluateTransactionFee ::
 evaluateTransactionFee pp tx numKeyWits =
   minfee @era pp tx Val.<+> (Coin . fromIntegral $ numKeyWits * keyWitSize)
   where
-    keyWitSize = sizeSigDSIGN (Proxy @(Crypto era))
+    keyWitSize = sizeSigDSIGN (Proxy @(CLC.DSIGN (Crypto era)))
 
 evaluateMinLovelaceOutput ::
   ( Era era,
