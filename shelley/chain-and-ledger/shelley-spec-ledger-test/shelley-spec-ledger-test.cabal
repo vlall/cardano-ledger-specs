@@ -103,6 +103,7 @@ library
     data-default-class,
     directory,
     generic-random,
+    hashable,
     hedgehog-quickcheck,
     hedgehog >= 1.0.4,
     iproute,

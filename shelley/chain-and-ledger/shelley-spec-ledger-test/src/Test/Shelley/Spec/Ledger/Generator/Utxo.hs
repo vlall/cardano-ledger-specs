@@ -18,6 +18,7 @@ module Test.Shelley.Spec.Ledger.Generator.Utxo
     showBalance,
     getNRandomPairs,
     encodedLen,
+    myDiscard,
   )
 where
 
@@ -115,6 +116,11 @@ import Test.Shelley.Spec.Ledger.Generator.Update (genUpdate)
 import Test.Shelley.Spec.Ledger.Utils (Split (..))
 import Cardano.Ledger.Era(Era)
 import NoThunks.Class()  -- Instances only
+import Debug.Trace(trace)
+
+
+myDiscard :: String -> a
+myDiscard message = trace ("Discard: "++message) discard
 
 -- ====================================================
 
@@ -228,7 +234,7 @@ genTx
       let txWits = spendWits ++ wdrlWits ++ certWits ++ updateWits
           scripts = mkScriptWits @era spendScripts (certScripts ++ wdrlScripts)
           mkTxWits' txbody =
-            mkTxWits @era (utxo,txbody,ssHash scriptspace)  ksIndexedPaymentKeys
+            mkTxWits @era (utxo,txbody,(ssHash3 scriptspace,ssHash2 scriptspace))  ksIndexedPaymentKeys
                      ksIndexedStakingKeys txWits scripts (hashAnnotated txbody)
       -------------------------------------------------------------------------
       -- SpendingBalance, Output Addresses (including some Pointer addresses)
@@ -258,7 +264,7 @@ genTx
       -- Occasionally we have a transaction generated with insufficient inputs
       -- to cover the deposits. In this case we discard the test case.
       let enough = (length outputAddrs) <×> (getField @"_minUTxOValue" pparams)
-      !_ <- when (coin spendingBalance < coin enough) discard
+      !_ <- when (coin spendingBalance < coin enough) (myDiscard "No inputs left. Utxo.hs")
 
       -------------------------------------------------------------------------
       -- Build a Draft Tx and repeatedly add to Delta until all fees are
@@ -287,7 +293,7 @@ genTx
           scripts' = Map.fromList $ map (\s -> (hashScript @era s, s)) additionalScripts
       -- We add now repeatedly add inputs until the process converges.
       converge
-        (ssHash scriptspace)
+        (ssHash3 scriptspace, ssHash2 scriptspace)
         remainderCoin
         txWits
         (scripts `Map.union` scripts')
@@ -441,7 +447,7 @@ genNextDelta
                 -- testing framework to generate almost-random transactions that always succeed every time.
                 -- Experience suggests that this happens less than 1% of the time, and does not lead to backtracking.
 
-                !_ <- when (null inputs) discard
+                !_ <- when (null inputs) (myDiscard "NoMoneyleft Utxo.hs")
 
                 let newWits =
                       mkTxWits @era
