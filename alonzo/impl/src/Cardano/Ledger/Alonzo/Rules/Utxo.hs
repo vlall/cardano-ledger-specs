@@ -395,7 +395,7 @@ utxoTransition = do
 
   {-   consumedpp utxo txb = producedpp poolParams txb    -}
   let consumed_ = consumed @era pp utxo txb
-      produced_ = Shelley.produced @era pp stakepools txb
+      produced_ = Shelley.produced @era pp (`Map.notMember` stakepools) txb
   consumed_ == produced_ ?! ValueNotConservedUTxO consumed_ produced_
 
   {-   adaID  ∉ supp mint tx   -}
@@ -758,10 +758,11 @@ evaluateTransactionBalance ::
   ) =>
   Core.PParams era ->
   UTxO era ->
-  Map (KeyHash 'StakePool (Crypto era)) (PoolParams (Crypto era)) ->
+  (KeyHash 'StakePool (Crypto era) -> Bool) ->
   Core.TxBody era ->
   Core.Value era
-evaluateTransactionBalance pp u stakepools txb = consumed pp u txb Val.<-> Shelley.produced @era pp stakepools txb
+evaluateTransactionBalance pp u isNewPool txb =
+  consumed pp u txb Val.<-> Shelley.produced @era pp isNewPool txb
 
 evaluateTransactionFee ::
   forall era tx.
