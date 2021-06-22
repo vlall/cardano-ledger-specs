@@ -19,6 +19,7 @@ module Cardano.Ledger.Alonzo.Rules.Utxo where
 import Cardano.Binary (FromCBOR (..), ToCBOR (..), serialize)
 import Cardano.Crypto.DSIGN.Class (sizeSigDSIGN)
 import Cardano.Ledger.Alonzo.Data (dataHashSize, getPlutusData)
+import Cardano.Ledger.Alonzo.Language (Language (..))
 import Cardano.Ledger.Alonzo.PlutusScriptApi (scriptsNeeded)
 import Cardano.Ledger.Alonzo.Rules.Utxos (UTXOS, UtxosPredicateFailure)
 import Cardano.Ledger.Alonzo.Scripts
@@ -67,6 +68,7 @@ import Cardano.Slotting.Time (SystemStart)
 import Control.Iterate.SetAlgebra (dom, eval, (⊆), (◁), (➖))
 import Control.Monad.Trans.Reader (asks)
 import Control.State.Transition.Extended
+import Data.Array (Array, (!))
 import qualified Data.ByteString.Lazy as BSL (length)
 import Data.ByteString.Short (ShortByteString)
 import Data.Coders
@@ -97,7 +99,7 @@ import NoThunks.Class (NoThunks)
 import Numeric.Natural (Natural)
 import qualified Plutus.V1.Ledger.Api as P
 import qualified PlutusCore.Evaluation.Machine.ExMemory as P
-import Shelley.Spec.Ledger.API (DCert, KeyHash, KeyRole (..), PoolParams, ScriptHash, Wdrl)
+import Shelley.Spec.Ledger.API (DCert, KeyHash, KeyRole (..), ScriptHash, Wdrl)
 import Shelley.Spec.Ledger.Address
   ( Addr (..),
     RewardAcnt,
@@ -672,16 +674,17 @@ evaluateTransactionExecutionUnits ::
   UTxO era ->
   EpochInfo m ->
   SystemStart ->
-  CostModel ->
+  Array Language CostModel ->
   m
     ( Map
         (ScriptHash (Crypto era))
         (Either (ScriptFailure (Crypto era)) (RdmrPtr, ExUnits))
     )
-evaluateTransactionExecutionUnits tx utxo ei sysS (CostModel costModel) = do
+evaluateTransactionExecutionUnits tx utxo ei sysS costModels = do
   txinfo <- txInfo ei sysS utxo tx
   pure $ Map.fromList $ map (findAndCount txinfo) neededPlutusScripts
   where
+    (CostModel costModel) = costModels ! PlutusV1
     note :: e -> Maybe a -> Either e a
     note _ (Just x) = Right x
     note e Nothing = Left e
