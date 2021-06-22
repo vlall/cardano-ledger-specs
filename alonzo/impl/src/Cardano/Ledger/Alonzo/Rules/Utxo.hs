@@ -28,7 +28,7 @@ import Cardano.Ledger.Alonzo.Scripts
     Script (..),
     pointWiseExUnits,
   )
-import Cardano.Ledger.Alonzo.Tx (ValidatedTx (..), minfee)
+import Cardano.Ledger.Alonzo.Tx (ValidatedTx (..), minfee, totExUnits)
 import qualified Cardano.Ledger.Alonzo.Tx as Alonzo
 import Cardano.Ledger.Alonzo.TxBody
   ( TxOut (..),
@@ -37,7 +37,7 @@ import Cardano.Ledger.Alonzo.TxBody
 import qualified Cardano.Ledger.Alonzo.TxBody as Alonzo (TxOut)
 import Cardano.Ledger.Alonzo.TxInfo (txInfo, valContext)
 import qualified Cardano.Ledger.Alonzo.TxSeq as Alonzo (TxSeq)
-import Cardano.Ledger.Alonzo.TxWitness (RdmrPtr (..), TxWitness (txrdmrs'), nullRedeemers, unRedeemers, unTxDats)
+import Cardano.Ledger.Alonzo.TxWitness (RdmrPtr (..), TxWitness (..), nullRedeemers, unRedeemers, unTxDats)
 import Cardano.Ledger.BaseTypes
   ( Network,
     ShelleyBase,
@@ -279,6 +279,7 @@ feesOK ::
     ValidateScript era, -- isTwoPhaseScriptAddress
     Core.TxOut era ~ Alonzo.TxOut era, -- balance requires this,
     Era.TxInBlock era ~ Alonzo.ValidatedTx era,
+    Core.Witnesses era ~ TxWitness era,
     HasField
       "collateral" -- to get inputs to pay the fees
       (Core.TxBody era)
@@ -348,6 +349,7 @@ utxoTransition ::
     Core.TxOut era ~ Alonzo.TxOut era,
     Core.Value era ~ Mary.Value (Crypto era),
     Core.TxBody era ~ Alonzo.TxBody era,
+    Core.Witnesses era ~ TxWitness era,
     TxInBlock era ~ Alonzo.ValidatedTx era,
     Era.TxSeq era ~ Alonzo.TxSeq era
   ) =>
@@ -470,7 +472,7 @@ utxoTransition = do
 
   {-   totExunits tx ≤ maxTxExUnits pp    -}
   let maxTxEx = getField @"_maxTxExUnits" pp
-      totExunits = getField @"totExunits" tx -- This sums up the ExUnits for all embedded Plutus Scripts anywhere in the transaction.
+      totExunits = totExUnits tx -- This sums up the ExUnits for all embedded Plutus Scripts anywhere in the transaction.
   pointWiseExUnits (<=) totExunits maxTxEx ?! ExUnitsTooBigUTxO maxTxEx totExunits
 
   {-   ‖collateral tx‖  ≤  maxCollInputs pp   -}
@@ -509,6 +511,7 @@ instance
     -- We fix Core.Value, Core.TxBody, and Core.TxOut
     Core.Value era ~ Mary.Value (Crypto era),
     Core.TxBody era ~ Alonzo.TxBody era,
+    Core.Witnesses era ~ TxWitness era,
     Core.TxOut era ~ Alonzo.TxOut era,
     Era.TxSeq era ~ Alonzo.TxSeq era,
     Era.TxInBlock era ~ Alonzo.ValidatedTx era
@@ -760,14 +763,15 @@ evaluateTransactionBalance pp u stakepools txb = consumed pp u txb Val.<-> Shell
 evaluateTransactionFee ::
   forall era tx.
   ( Era era,
+    Core.Witnesses era ~ TxWitness era,
     HasField "_minfeeA" (Core.PParams era) Natural,
     HasField "_minfeeB" (Core.PParams era) Natural,
     HasField "_prices" (Core.PParams era) Prices,
-    HasField "totExunits" tx ExUnits,
-    HasField "txsize" tx Integer
+    HasField "witnesses" (tx era) (TxWitness era),
+    HasField "txsize" (tx era) Integer
   ) =>
   Core.PParams era ->
-  tx ->
+  tx era ->
   Word ->
   Coin
 evaluateTransactionFee pp tx numKeyWits =

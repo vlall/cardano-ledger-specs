@@ -48,6 +48,7 @@ module Cardano.Ledger.Alonzo.Tx
     TxBody (..),
     -- Figure 4
     ScriptPurpose (..),
+    totExUnits,
     --  Figure 5
     getValidatorHash,
     minfee,
@@ -125,6 +126,7 @@ import Cardano.Ledger.Val (Val (coin, (<+>), (<×>)))
 import Control.DeepSeq (NFData (..))
 import qualified Data.ByteString.Lazy as LBS
 import Data.Coders
+import Data.Foldable (fold)
 import qualified Data.Map as Map
 import Data.Maybe.Strict
   ( StrictMaybe (..),
@@ -223,6 +225,12 @@ instance
   HasField "txdatahash" (ValidatedTx era) (Map.Map (DataHash c) (Data era))
   where
   getField = unTxDats . txdats' . wits
+
+instance
+  w ~ TxWitness era =>
+  HasField "witnesses" (ValidatedTx era) w
+  where
+  getField = wits
 
 -- =========================================================
 -- Figure 2: Definitions for Transactions
@@ -324,11 +332,12 @@ minfee ::
   ( HasField "_minfeeA" (Core.PParams era) Natural,
     HasField "_minfeeB" (Core.PParams era) Natural,
     HasField "_prices" (Core.PParams era) Prices,
-    HasField "totExunits" tx ExUnits,
-    HasField "txsize" tx Integer
+    HasField "witnesses" (tx era) (Core.Witnesses era),
+    HasField "txrdmrs" (Core.Witnesses era) (Redeemers era),
+    HasField "txsize" (tx era) Integer
   ) =>
   Core.PParams era ->
-  tx ->
+  tx era ->
   Coin
 minfee pp tx =
   (getField @"txsize" tx <×> a pp)
@@ -337,17 +346,15 @@ minfee pp tx =
   where
     a protparam = Coin (fromIntegral (getField @"_minfeeA" protparam))
     b protparam = Coin (fromIntegral (getField @"_minfeeB" protparam))
-    allExunits = getField @"totExunits" tx
+    allExunits = totExUnits tx
 
--- The only thing that keeps minfee from working on Core.Tx is that
--- not all eras can extract a ExUninits from a Core.Tx. For the Alonzo
--- era, we use this function, specialized to the Alonzo Tx defined in this file.
--- If we had instances (HasField "exUnits" (Core.Tx era) ExUnits) we'd be golden
-
-instance HasField "totExunits" (ValidatedTx era) ExUnits where
-  getField tx = foldl (<>) mempty (snd $ unzip (Map.elems trd))
-    where
-      trd = unRedeemers $ getField @"txrdmrs" (getField @"wits" tx)
+totExUnits ::
+  ( HasField "witnesses" (tx era) (Core.Witnesses era),
+    HasField "txrdmrs" (Core.Witnesses era) (Redeemers era)
+  ) =>
+  tx era ->
+  ExUnits
+totExUnits = fold . snd . unzip . Map.elems . unRedeemers . getField @"txrdmrs" . getField @"witnesses"
 
 -- The specification uses "validatorHash" to extract ScriptHash from
 -- an Addr. But not every Addr has a ScriptHash. In particular KeyHashObj
