@@ -27,7 +27,7 @@ import NoThunks.Class (NoThunks)
 -- We might add new languages in the futures.
 
 data Language = PlutusV1 --    | ADD-NEW-LANGUAGES-HERE
-  deriving (Eq, Generic, Show, Ord, Enum, Ix)
+  deriving (Eq, Generic, Show, Ord, Enum, Bounded, Ix)
 
 instance NoThunks Language
 
