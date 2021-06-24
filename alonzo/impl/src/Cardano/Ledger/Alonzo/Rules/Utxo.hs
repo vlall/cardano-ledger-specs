@@ -18,7 +18,7 @@ module Cardano.Ledger.Alonzo.Rules.Utxo where
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..), serialize)
 import Cardano.Crypto.DSIGN.Class (sizeSigDSIGN)
-import Cardano.Ledger.Alonzo.Data (dataHashSize, getPlutusData)
+import Cardano.Ledger.Alonzo.Data (dataHashSize, getPlutusData, Data)
 import Cardano.Ledger.Alonzo.Language (Language (..))
 import Cardano.Ledger.Alonzo.PlutusScriptApi (scriptsNeeded)
 import Cardano.Ledger.Alonzo.Rules.Utxos (UTXOS, UtxosPredicateFailure)
@@ -70,7 +70,6 @@ import Control.Monad.Trans.Reader (asks)
 import Control.State.Transition.Extended
 import Data.Array (Array, (!))
 import qualified Data.ByteString.Lazy as BSL (length)
-import Data.ByteString.Short (ShortByteString)
 import Data.Coders
   ( Decode (..),
     Encode (..),
@@ -99,7 +98,7 @@ import NoThunks.Class (NoThunks)
 import Numeric.Natural (Natural)
 import qualified Plutus.V1.Ledger.Api as P
 import qualified PlutusCore.Evaluation.Machine.ExMemory as P
-import Shelley.Spec.Ledger.API (DCert, KeyHash, KeyRole (..), ScriptHash, Wdrl)
+import Shelley.Spec.Ledger.API (DCert, KeyHash, KeyRole (..), Wdrl)
 import Shelley.Spec.Ledger.Address
   ( Addr (..),
     RewardAcnt,
@@ -651,9 +650,8 @@ instance
   fromCBOR = decode (Summands "UtxoPredicateFailure" decFail)
 
 data ScriptFailure c
-  = MissingRedeemer RdmrPtr
-  | InvalidScriptPurpose (Alonzo.ScriptPurpose c)
-  | MissingScript (ScriptHash c)
+  = RedeemerNotNeeded RdmrPtr
+  | MissingScript RdmrPtr
   | MissingDatum (Alonzo.DataHash c)
   | ValidationFailed P.EvaluationError
   | UnknownTxIn (TxIn c)
@@ -677,31 +675,35 @@ evaluateTransactionExecutionUnits ::
   Array Language CostModel ->
   m
     ( Map
-        (ScriptHash (Crypto era))
-        (Either (ScriptFailure (Crypto era)) (RdmrPtr, ExUnits))
+        RdmrPtr
+        (Either (ScriptFailure (Crypto era)) ExUnits)
     )
 evaluateTransactionExecutionUnits tx utxo ei sysS costModels = do
   txinfo <- txInfo ei sysS utxo tx
-  pure $ Map.fromList $ map (findAndCount txinfo) neededPlutusScripts
+  pure $ Map.mapWithKey (findAndCount txinfo) (unRedeemers $ getField @"txrdmrs" ws)
   where
-    (CostModel costModel) = costModels ! PlutusV1
-    note :: e -> Maybe a -> Either e a
-    note _ (Just x) = Right x
-    note e Nothing = Left e
 
     txb = getField @"body" tx
     ws = getField @"wits" tx
-    rs = unRedeemers $ getField @"txrdmrs" ws
     dats = unTxDats $ getField @"txdats" ws
     scripts = getField @"txscripts" ws
-    sNeeded = scriptsNeeded utxo tx
-    neededPlutusScripts = do
-      (sp, sh) <- sNeeded
+
+    ptrToPlutusScript = Map.fromList $ do
+      (sp, sh) <- scriptsNeeded utxo tx
       msb <- case Map.lookup sh scripts of
         Nothing -> pure Nothing
         Just (TimelockScript _) -> []
         Just (PlutusScript bytes) -> pure $ Just bytes
-      pure (sp, sh, msb)
+      pointer <- case Alonzo.rdptr @era txb sp of
+        SNothing -> []
+        -- Since scriptsNeeded used the transaction to create script purposes,
+        -- it would be a logic error if Alonzo.rdptr was not able to find sp.
+        SJust p -> pure p
+      pure (pointer, (sp, msb))
+
+    note :: e -> Maybe a -> Either e a
+    note _ (Just x) = Right x
+    note e Nothing = Left e
 
     exBudgetToExUnits :: P.ExBudget -> Maybe ExUnits
     exBudgetToExUnits (P.ExBudget (P.ExCPU cpu) (P.ExMemory memory)) =
@@ -715,21 +717,16 @@ evaluateTransactionExecutionUnits tx utxo ei sysS costModels = do
       where
         i = toInteger ci
 
+    (CostModel costModel) = costModels ! PlutusV1
+
     findAndCount ::
       P.TxInfo ->
-      ( Alonzo.ScriptPurpose (Crypto era),
-        ScriptHash (Crypto era),
-        Maybe ShortByteString
-      ) ->
-      ( ScriptHash (Crypto era),
-        Either (ScriptFailure (Crypto era)) (RdmrPtr, ExUnits)
-      )
-    findAndCount inf (sp, sh, mScriptBytes) = (,) sh $ do
-      r <-
-        note (InvalidScriptPurpose sp) $
-          strictMaybeToMaybe $ Alonzo.rdptr @era txb sp
-      (rdmr, _) <- note (MissingRedeemer r) $ Map.lookup r rs
-      script <- note (MissingScript sh) $ mScriptBytes
+      RdmrPtr ->
+      (Data era, ExUnits) ->
+      Either (ScriptFailure (Crypto era)) ExUnits
+    findAndCount inf pointer (rdmr, _) = do
+      (sp, mscript) <- note (RedeemerNotNeeded pointer) $ Map.lookup pointer ptrToPlutusScript
+      script <- note (MissingScript pointer) mscript
       args <- case sp of
         (Alonzo.Spending txin) -> do
           txOut <- note (UnknownTxIn txin) $ Map.lookup txin (unUTxO utxo)
@@ -740,11 +737,9 @@ evaluateTransactionExecutionUnits tx utxo ei sysS costModels = do
         _ -> pure [rdmr, valContext inf sp]
       let pArgs = map getPlutusData args
 
-      exUnits <- case snd $ P.evaluateScriptCounting P.Quiet costModel script pArgs of
+      case snd $ P.evaluateScriptCounting P.Quiet costModel script pArgs of
         Left e -> Left $ ValidationFailed e
         Right exBudget -> note (IncompatibleBudget exBudget) $ exBudgetToExUnits exBudget
-
-      pure (r, exUnits)
 
 evaluateTransactionBalance ::
   forall era.
@@ -790,4 +785,4 @@ evaluateMinLovelaceOutput ::
   TxOut era ->
   Core.PParams era ->
   Coin
-evaluateMinLovelaceOutput out pp = Coin $ utxoEntrySize out * (unCoin $ getField @"_coinsPerUTxOWord" pp)
+evaluateMinLovelaceOutput out pp = Coin $ utxoEntrySize out * unCoin (getField @"_coinsPerUTxOWord" pp)
